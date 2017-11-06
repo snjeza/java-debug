@@ -34,6 +34,7 @@ import com.microsoft.java.debug.core.adapter.Constants;
 import com.microsoft.java.debug.core.adapter.ErrorCode;
 import com.microsoft.java.debug.core.adapter.IDebugAdapterContext;
 import com.microsoft.java.debug.core.adapter.IDebugRequestHandler;
+import com.microsoft.java.debug.core.adapter.IHotCodeReplaceProvider;
 import com.microsoft.java.debug.core.adapter.ISourceLookUpProvider;
 import com.microsoft.java.debug.core.adapter.IVirtualMachineManagerProvider;
 import com.microsoft.java.debug.core.adapter.ProcessConsole;
@@ -162,6 +163,8 @@ public class LaunchRequestHandler implements IDebugRequestHandler {
             options.put(Constants.PROJECTNAME, launchArguments.projectName);
         }
         sourceProvider.initialize(context.getDebugSession(), options);
+        IHotCodeReplaceProvider hcrProvider = context.getProvider(IHotCodeReplaceProvider.class);
+        hcrProvider.initialize(context.getDebugSession(), options);
     }
 
     private static String parseMainClassWithoutModuleName(String mainClass) {
