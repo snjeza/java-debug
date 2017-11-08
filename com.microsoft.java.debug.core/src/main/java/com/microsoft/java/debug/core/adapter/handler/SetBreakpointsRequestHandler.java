@@ -14,10 +14,13 @@ package com.microsoft.java.debug.core.adapter.handler;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.StringUtils;
 
+import com.microsoft.java.debug.core.Configuration;
 import com.microsoft.java.debug.core.DebugException;
 import com.microsoft.java.debug.core.IBreakpoint;
 import com.microsoft.java.debug.core.adapter.AdapterUtils;
@@ -25,6 +28,9 @@ import com.microsoft.java.debug.core.adapter.BreakpointManager;
 import com.microsoft.java.debug.core.adapter.ErrorCode;
 import com.microsoft.java.debug.core.adapter.IDebugAdapterContext;
 import com.microsoft.java.debug.core.adapter.IDebugRequestHandler;
+import com.microsoft.java.debug.core.adapter.IHotCodeReplaceProvider;
+import com.microsoft.java.debug.core.adapter.IRedefineClassEvent;
+import com.microsoft.java.debug.core.adapter.IRedefineClassListener;
 import com.microsoft.java.debug.core.adapter.ISourceLookUpProvider;
 import com.microsoft.java.debug.core.protocol.Events;
 import com.microsoft.java.debug.core.protocol.Messages.Response;
@@ -34,8 +40,15 @@ import com.microsoft.java.debug.core.protocol.Requests.SetBreakpointArguments;
 import com.microsoft.java.debug.core.protocol.Responses;
 import com.microsoft.java.debug.core.protocol.Types;
 
-public class SetBreakpointsRequestHandler implements IDebugRequestHandler {
+public class SetBreakpointsRequestHandler implements IDebugRequestHandler, IRedefineClassListener {
+
+    private static final Logger logger = Logger.getLogger(Configuration.LOGGER_NAME);
+
     private BreakpointManager manager = new BreakpointManager();
+
+    private IDebugAdapterContext context = null;
+
+    private boolean isInitialized = false;
 
     @Override
     public List<Command> getTargetCommands() {
@@ -44,21 +57,28 @@ public class SetBreakpointsRequestHandler implements IDebugRequestHandler {
 
     @Override
     public void handle(Command command, Arguments arguments, Response response, IDebugAdapterContext context) {
+        synchronized (this) {
+            if (!isInitialized) {
+                IHotCodeReplaceProvider hcrProvider = context.getProvider(IHotCodeReplaceProvider.class);
+                hcrProvider.addRedefineClassListener(this);
+                isInitialized = true;
+            }
+        }
+        this.context = context;
         if (context.getDebugSession() == null) {
             AdapterUtils.setErrorResponse(response, ErrorCode.EMPTY_DEBUG_SESSION, "Empty debug session.");
             return;
         }
-
         SetBreakpointArguments bpArguments = (SetBreakpointArguments) arguments;
         String clientPath = bpArguments.source.path;
         if (AdapterUtils.isWindows()) {
-            // VSCode may send drive letters with inconsistent casing which will mess up the key
+            // VSCode may send drive letters with inconsistent casing which will mess up the
+            // key
             // in the BreakpointManager. See https://github.com/Microsoft/vscode/issues/6268
             // Normalize the drive letter casing. Note that drive letters
             // are not localized so invariant is safe here.
             String drivePrefix = FilenameUtils.getPrefix(clientPath);
-            if (drivePrefix != null && drivePrefix.length() >= 2
-                    && Character.isLowerCase(drivePrefix.charAt(0)) && drivePrefix.charAt(1) == ':') {
+            if (drivePrefix != null && drivePrefix.length() >= 2 && Character.isLowerCase(drivePrefix.charAt(0)) && drivePrefix.charAt(1) == ':') {
                 drivePrefix = drivePrefix.substring(0, 2); // d:\ is an illegal regex string, convert it to d:
                 clientPath = clientPath.replaceFirst(drivePrefix, drivePrefix.toUpperCase());
             }
@@ -72,7 +92,8 @@ public class SetBreakpointsRequestHandler implements IDebugRequestHandler {
             sourcePath = AdapterUtils.convertPath(clientPath, AdapterUtils.isUri(clientPath), context.isDebuggerPathsAreUri());
         }
 
-        // When breakpoint source path is null or an invalid file path, send an ErrorResponse back.
+        // When breakpoint source path is null or an invalid file path, send an
+        // ErrorResponse back.
         if (StringUtils.isBlank(sourcePath)) {
             AdapterUtils.setErrorResponse(response, ErrorCode.SET_BREAKPOINT_FAILURE,
                     String.format("Failed to setBreakpoint. Reason: '%s' is an invalid path.", bpArguments.source.path));
@@ -82,7 +103,8 @@ public class SetBreakpointsRequestHandler implements IDebugRequestHandler {
             List<Types.Breakpoint> res = new ArrayList<>();
             IBreakpoint[] toAdds = this.convertClientBreakpointsToDebugger(sourcePath, bpArguments.breakpoints, context);
             // See the VSCode bug https://github.com/Microsoft/vscode/issues/36471.
-            // The source uri sometimes is encoded by VSCode, the debugger will decode it to keep the uri consistent.
+            // The source uri sometimes is encoded by VSCode, the debugger will decode it to
+            // keep the uri consistent.
             IBreakpoint[] added = manager.setBreakpoints(AdapterUtils.decodeURIComponent(sourcePath), toAdds, bpArguments.sourceModified);
             for (int i = 0; i < bpArguments.breakpoints.length; i++) {
                 // For newly added breakpoint, should install it to debuggee first.
@@ -133,4 +155,26 @@ public class SetBreakpointsRequestHandler implements IDebugRequestHandler {
         return breakpoints;
     }
 
+    @Override
+    public void redefineClasses(IRedefineClassEvent event) {
+        List<String> typenames = event.getRedefinedClassNames();
+        if (typenames == null || typenames.size() == 0) {
+            return;
+        }
+        IBreakpoint[] copy = manager.getBreakpoints().clone();
+
+        for (IBreakpoint breakpoint : copy) {
+            if (typenames.contains(breakpoint.className())) {
+                try {
+                    breakpoint.close();
+                    breakpoint.install().thenAccept(bp -> {
+                        Events.BreakpointEvent bpEvent = new Events.BreakpointEvent("new", this.convertDebuggerBreakpointToClient(bp, context));
+                        context.sendEventAsync(bpEvent);
+                    });
+                } catch (Exception e) {
+                    logger.log(Level.SEVERE, String.format("Remove breakpoint exception: %s", e.toString()), e);
+                }
+            }
+        }
+    }
 }

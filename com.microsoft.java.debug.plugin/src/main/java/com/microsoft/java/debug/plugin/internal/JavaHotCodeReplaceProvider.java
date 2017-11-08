@@ -63,6 +63,8 @@ import com.microsoft.java.debug.core.DebugException;
 import com.microsoft.java.debug.core.DebugUtility;
 import com.microsoft.java.debug.core.IDebugSession;
 import com.microsoft.java.debug.core.adapter.IHotCodeReplaceProvider;
+import com.microsoft.java.debug.core.adapter.IRedefineClassEvent;
+import com.microsoft.java.debug.core.adapter.IRedefineClassListener;
 import com.sun.jdi.ArrayType;
 import com.sun.jdi.ClassNotLoadedException;
 import com.sun.jdi.IncompatibleThreadStateException;
@@ -79,6 +81,8 @@ public class JavaHotCodeReplaceProvider implements IHotCodeReplaceProvider, IRes
     private static final String CLASS_FILE_EXTENSION = "class"; //$NON-NLS-1$
 
     private IDebugSession currentDebugSession;
+
+    private List<IRedefineClassListener> listeners = new ArrayList<>();
 
     /**
      * Visitor for resource deltas.
@@ -292,6 +296,16 @@ public class JavaHotCodeReplaceProvider implements IHotCodeReplaceProvider, IRes
         }
     }
 
+    @Override
+    public void addRedefineClassListener(IRedefineClassListener listener) {
+        listeners.add(listener);
+    }
+
+    @Override
+    public void removeRedefineClassListener(IRedefineClassListener listener) {
+        listeners.remove(listener);
+    }
+
     private void doHotCodeReplace(List<IResource> resources, List<String> fullyQualifiedName) {
         if (this.currentDebugSession == null) {
             return;
@@ -325,6 +339,8 @@ public class JavaHotCodeReplaceProvider implements IHotCodeReplaceProvider, IRes
         if (currentDebugSession.getVM().canRedefineClasses()) {
             redefineTypesJDK(resourcesToReplace, qualifiedNamesToReplace);
         }
+
+        onRedefinedClasses(fullyQualifiedName);
 
         try {
             if (currentDebugSession.getVM().canPopFrames() && framesPopped) {
@@ -772,5 +788,16 @@ public class JavaHotCodeReplaceProvider implements IHotCodeReplaceProvider, IRes
             }
         }
         return null;
+    }
+
+    private void onRedefinedClasses(List<String> fullyQualifiedNames) {
+        for (IRedefineClassListener listener : listeners) {
+            listener.redefineClasses(new IRedefineClassEvent() {
+                @Override
+                public List<String> getRedefinedClassNames() {
+                    return fullyQualifiedNames;
+                }
+            });
+        }
     }
 }

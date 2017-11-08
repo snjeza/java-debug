@@ -13,4 +13,7 @@ package com.microsoft.java.debug.core.adapter;
 
 public interface IHotCodeReplaceProvider extends IProvider {
 
+    void addRedefineClassListener(IRedefineClassListener listener);
+
+    void removeRedefineClassListener(IRedefineClassListener listener);
 }
