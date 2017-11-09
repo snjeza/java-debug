@@ -297,18 +297,20 @@ public class DebugUtility {
         if (thread == null || thread.isCollected()) {
             return;
         }
-        try {
-            int suspends = thread.suspendCount();
-            for (int i = 0; i < suspends; i++) {
-                /**
-                 * Invoking this method will decrement the count of pending suspends on this thread.
-                 * If it is decremented to 0, the thread will continue to execute.
-                 */
-                thread.resume();
+        synchronized (thread) {
+            try {
+                int suspends = thread.suspendCount();
+                for (int i = 0; i < suspends; i++) {
+                    /**
+                     * Invoking this method will decrement the count of pending suspends on this thread.
+                     * If it is decremented to 0, the thread will continue to execute.
+                     */
+                    thread.resume();
+                }
+            } catch (ObjectCollectedException ex) {
+                // ObjectCollectionException can be thrown if the thread has already completed (exited) in the VM when calling suspendCount,
+                // the resume operation to this thread is meanness.
             }
-        } catch (ObjectCollectedException ex) {
-            // ObjectCollectionException can be thrown if the thread has already completed (exited) in the VM when calling suspendCount,
-            // the resume operation to this thread is meanness.
         }
     }
 

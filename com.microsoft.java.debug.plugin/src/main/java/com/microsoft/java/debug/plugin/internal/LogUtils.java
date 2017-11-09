@@ -42,6 +42,13 @@ public final class LogUtils {
         logger.setLevel(level);
     }
 
+    public static void deinitialize() {
+        for (Handler h: usageDataLogger.getHandlers()) {
+            usageDataLogger.removeHandler(h);
+        }
+        Log.removeAllHandlers();
+    }
+
     /**
      * Configure log level setting for java debugger.
      * @param arguments the first element of the arguments should be the String representation of level(info, fine, warning..).

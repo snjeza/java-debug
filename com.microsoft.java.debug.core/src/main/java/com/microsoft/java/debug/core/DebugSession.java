@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.sun.jdi.ThreadReference;
+import com.sun.jdi.VMDisconnectedException;
 import com.sun.jdi.VirtualMachine;
 import com.sun.jdi.request.EventRequest;
 import com.sun.jdi.request.EventRequestManager;
@@ -61,7 +62,12 @@ public class DebugSession implements IDebugSession {
                 tr.resume();
             }
         }
-        vm.resume();
+        try {
+            vm.resume();
+        } catch (VMDisconnectedException ex) {
+            // ignore this since DebugUtility.getAllThreadsSafely may encounter VMDisconnectedException and returns an
+            // empty
+        }
     }
 
     @Override

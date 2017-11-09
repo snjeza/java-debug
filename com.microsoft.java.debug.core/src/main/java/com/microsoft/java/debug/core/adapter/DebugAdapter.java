@@ -51,10 +51,11 @@ public class DebugAdapter implements IDebugAdapter {
     /**
      * Constructor.
      */
-    public DebugAdapter(BiConsumer<Events.DebugEvent, Boolean> consumer, IProviderContext providerContext) {
+    public DebugAdapter(BiConsumer<Events.DebugEvent, Boolean> consumer, Consumer<Response> sendMessageFunc, IProviderContext providerContext) {
         eventConsumer = consumer;
         this.providerContext = providerContext;
         debugContext = new DebugAdapterContext(this);
+        debugContext.setResponseConsumer(sendMessageFunc);
         requestHandlers = new HashMap<>();
         initialize();
     }
@@ -75,6 +76,7 @@ public class DebugAdapter implements IDebugAdapter {
                 return response;
             }
             List<IDebugRequestHandler> handlers = requestHandlers.get(command);
+            debugContext.setResponseAsync(false);
             if (handlers != null && !handlers.isEmpty()) {
                 for (IDebugRequestHandler handler : handlers) {
                     handler.handle(command, cmdArgs, response, debugContext);
@@ -82,6 +84,9 @@ public class DebugAdapter implements IDebugAdapter {
             } else {
                 AdapterUtils.setErrorResponse(response, ErrorCode.UNRECOGNIZED_REQUEST_FAILURE,
                         String.format("Unrecognized request: { _request: %s }", request.command));
+            }
+            if (debugContext.shouldSendResponseAsync()) {
+                return null;
             }
         } catch (Exception e) {
             logger.log(Level.SEVERE, String.format("DebugSession dispatch exception: %s", e.toString()), e);

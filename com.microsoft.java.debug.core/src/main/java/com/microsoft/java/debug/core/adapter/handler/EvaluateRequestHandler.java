@@ -51,7 +51,24 @@ public class EvaluateRequestHandler implements IDebugRequestHandler {
     public List<Command> getTargetCommands() {
         return Arrays.asList(Command.EVALUATE);
     }
+    public static StackFrame refreshStackFrames(StackFrame sf) {
+        try {
+            sf.thisObject();
+            return sf;
+        } catch (InvalidStackFrameException ex) {
+             try {
+                for(StackFrame nsf : sf.thread().frames()) {
+                    if (nsf.location().equals(sf.location())) {
+                        return nsf;
+                    }
+                }
 
+            } catch (IncompatibleThreadStateException e) {
+                e.printStackTrace();
+            }
+        }
+        return sf;
+    }
     @Override
     public void handle(Command command, Arguments arguments, Response response, IDebugAdapterContext context) {
         EvaluateArguments evalArguments = (EvaluateArguments) arguments;
@@ -80,11 +97,6 @@ public class EvaluateRequestHandler implements IDebugRequestHandler {
             return;
         }
 
-        if (!simpleExprPattern.matcher(expression).matches()) {
-            AdapterUtils.setErrorResponse(response, ErrorCode.EVALUATE_FAILURE,
-                    "Failed to evaluate. Reason: Complex expression is not supported currently.");
-            return;
-        }
 
         JdiObjectProxy<StackFrame> stackFrameProxy = (JdiObjectProxy<StackFrame>) context.getRecyclableIdPool().getObjectById(evalArguments.frameId);
         if (stackFrameProxy == null) {
@@ -92,97 +104,30 @@ public class EvaluateRequestHandler implements IDebugRequestHandler {
             AdapterUtils.setErrorResponse(response, ErrorCode.EVALUATE_FAILURE, "Failed to evaluate. Reason: Cannot evaluate because the thread is resumed.");
             return;
         }
-
-        // split a.b.c => ["a", "b", "c"]
-        List<String> referenceExpressions = Arrays.stream(StringUtils.split(expression, '.'))
-                .filter(StringUtils::isNotBlank).map(StringUtils::trim).collect(Collectors.toList());
-
-        // get first level of value from stack frame
-        Variable firstLevelValue = null;
-        boolean inStaticMethod = stackFrameProxy.getProxiedObject().location().method().isStatic();
-        String firstExpression = referenceExpressions.get(0);
-        // handle special case of 'this'
-        if (firstExpression.equals("this") && !inStaticMethod) {
-            firstLevelValue = VariableUtils.getThisVariable(stackFrameProxy.getProxiedObject());
+        StackFrame sf = refreshStackFrames(stackFrameProxy.getProxiedObject());
+        if (sf == null) {
+            sf = stackFrameProxy.getProxiedObject();
         }
-        if (firstLevelValue == null) {
-            try {
-                // local variables first, that means
-                // if both local variable and static variable are found, use local variable
-                List<Variable> localVariables = VariableUtils.listLocalVariables(stackFrameProxy.getProxiedObject());
-                List<Variable> matchedLocal = localVariables.stream()
-                        .filter(localVariable -> localVariable.name.equals(firstExpression)).collect(Collectors.toList());
-                if (!matchedLocal.isEmpty()) {
-                    firstLevelValue = matchedLocal.get(0);
-                } else {
-                    List<Variable> staticVariables = VariableUtils.listStaticVariables(stackFrameProxy.getProxiedObject());
-                    List<Variable> matchedStatic = staticVariables.stream()
-                            .filter(staticVariable -> staticVariable.name.equals(firstExpression)).collect(Collectors.toList());
-                    if (matchedStatic.isEmpty()) {
-                        AdapterUtils.setErrorResponse(response, ErrorCode.EVALUATE_FAILURE,
-                                String.format("Failed to evaluate. Reason: Cannot find the variable: %s.", referenceExpressions.get(0)));
-                        return;
-                    }
-                    firstLevelValue = matchedStatic.get(0);
-                }
+        IEvaluationProvider engine = context.getProvider(IEvaluationProvider.class);
+        final IDebugAdapterContext finalContext = context;
+        String test = engine.eval(expression, sf, result -> {
+            response.body = new Responses.EvaluateResponseBody(result,
+                    0, "test",
+                    0);
+            finalContext.sendResponseAsync(response);
+        });
+        if (!StringUtils.isBlank(test)) {
+            response.body = new Responses.EvaluateResponseBody(test,
+                    0, "test",
+                    0);
 
-            } catch (AbsentInformationException e) {
-                // ignore
-            }
-        }
+        } else {
+            response.body = new Responses.EvaluateResponseBody("fdsfs",
+                    0, "test",
+                    0);
 
-        if (firstLevelValue == null) {
-            AdapterUtils.setErrorResponse(response, ErrorCode.EVALUATE_FAILURE,
-                    String.format("Failed to evaluate. Reason: Cannot find variable with name '%s'.", referenceExpressions.get(0)));
-            return;
         }
-        ThreadReference thread = stackFrameProxy.getProxiedObject().thread();
-        Value currentValue = firstLevelValue.value;
+        context.setResponseAsync(true);
 
-        for (int i = 1; i < referenceExpressions.size(); i++) {
-            String fieldName = referenceExpressions.get(i);
-            if (currentValue == null) {
-                AdapterUtils.setErrorResponse(response, ErrorCode.EVALUATE_FAILURE, "Failed to evaluate. Reason: Evaluation encounters NPE error.");
-                return;
-            }
-            if (currentValue instanceof PrimitiveValue) {
-                AdapterUtils.setErrorResponse(response, ErrorCode.EVALUATE_FAILURE,
-                        String.format("Failed to evaluate. Reason: Cannot find the field: %s.", fieldName));
-                return;
-            }
-            if (currentValue instanceof ArrayReference) {
-                AdapterUtils.setErrorResponse(response, ErrorCode.EVALUATE_FAILURE,
-                        String.format("Failed to evaluate. Reason: Evaluating array elements is not supported currently.", fieldName));
-                return;
-            }
-            ObjectReference obj = (ObjectReference) currentValue;
-            Field field = obj.referenceType().fieldByName(fieldName);
-            if (field == null) {
-                AdapterUtils.setErrorResponse(response, ErrorCode.EVALUATE_FAILURE,
-                        String.format("Failed to evaluate. Reason: Cannot find the field: %s.", fieldName));
-                return;
-            }
-            if (field.isStatic()) {
-                AdapterUtils.setErrorResponse(response, ErrorCode.EVALUATE_FAILURE,
-                        String.format("Failed to evaluate. Reason: Cannot find the field: %s.", fieldName));
-                return;
-            }
-            currentValue = obj.getValue(field);
-        }
-
-        int referenceId = 0;
-        if (currentValue instanceof ObjectReference && VariableUtils.hasChildren(currentValue, showStaticVariables)) {
-            // save the evaluated value in object pool, because like java.lang.String, the evaluated object will have sub structures
-            // we need to set up the id map.
-            VariableProxy varProxy = new VariableProxy(thread.uniqueID(), "Local", (ObjectReference) currentValue);
-            referenceId = context.getRecyclableIdPool().addObject(thread.uniqueID(), varProxy);
-        }
-        int indexedVariables = 0;
-        if (currentValue instanceof ArrayReference) {
-            indexedVariables = ((ArrayReference) currentValue).length();
-        }
-        response.body = new Responses.EvaluateResponseBody(context.getVariableFormatter().valueToString(currentValue, options),
-                referenceId, context.getVariableFormatter().typeToString(currentValue == null ? null : currentValue.type(), options),
-                indexedVariables);
     }
 }

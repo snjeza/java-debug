@@ -44,7 +44,10 @@ class JdtLogHandler extends Handler {
         }
 
         IStatus status = new Status(severity, record.getLoggerName(), record.getMessage(), record.getThrown());
-
-        Platform.getLog(JavaDebuggerServerPlugin.context.getBundle()).log(status);
+        try {
+            Platform.getLog(JavaDebuggerServerPlugin.context.getBundle()).log(status);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 }

@@ -143,8 +143,6 @@ public class ThreadsRequestHandler implements IDebugRequestHandler {
             DebugUtility.resumeThread(thread);
             checkThreadRunningAndRecycleIds(thread, context);
         } else {
-            context.getDebugSession().resume();
-            context.getRecyclableIdPool().removeAllObjects();
         }
         response.body = new Responses.ContinueResponseBody(allThreadsContinued);
     }

@@ -13,6 +13,7 @@ package com.microsoft.java.debug.core.adapter;
 
 import java.nio.charset.Charset;
 import java.util.Map;
+import java.util.function.Consumer;
 
 import com.microsoft.java.debug.core.IDebugSession;
 import com.microsoft.java.debug.core.adapter.variables.IVariableFormatter;
@@ -34,6 +35,10 @@ public interface IDebugAdapterContext {
      *            the debug event
      */
     void sendEventAsync(Events.DebugEvent event);
+
+    void setResponseAsync(boolean async);
+    boolean shouldSendResponseAsync();
+    void sendResponseAsync(Response response);
 
     <T extends IProvider> T getProvider(Class<T> clazz);
 
