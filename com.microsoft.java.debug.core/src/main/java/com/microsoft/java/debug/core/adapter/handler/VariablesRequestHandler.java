@@ -81,6 +81,10 @@ public class VariablesRequestHandler implements IDebugRequestHandler {
         if (containerNode.getProxiedVariable() instanceof StackFrame) {
             try {
                 StackFrame frame = (StackFrame) containerNode.getProxiedVariable();
+                StackFrame sf = EvaluateRequestHandler.refreshStackFrames(frame);
+                if (sf!= null) {
+                    frame = sf;
+                }
                 childrenList = VariableUtils.listLocalVariables(frame);
                 Variable thisVariable = VariableUtils.getThisVariable(frame);
                 if (thisVariable != null) {
