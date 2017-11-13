@@ -24,8 +24,10 @@ import java.util.concurrent.CompletableFuture;
 
 import org.apache.commons.lang3.StringUtils;
 
+import com.sun.jdi.IncompatibleThreadStateException;
 import com.sun.jdi.Location;
 import com.sun.jdi.ObjectCollectedException;
+import com.sun.jdi.StackFrame;
 import com.sun.jdi.ThreadReference;
 import com.sun.jdi.VMDisconnectedException;
 import com.sun.jdi.VirtualMachine;
@@ -310,6 +312,26 @@ public class DebugUtility {
             // ObjectCollectionException can be thrown if the thread has already completed (exited) in the VM when calling suspendCount,
             // the resume operation to this thread is meanness.
         }
+    }
+
+    /**
+     * Compute the stack frame model from the ThreadReference.
+     *
+     * @param thread
+     *            the thread reference
+     * @return the list of the computed stack frame model
+     */
+    public static List<IStackFrame> computeStackFrame(ThreadReference thread) {
+        List<IStackFrame> result = new ArrayList<IStackFrame>();
+        try {
+            List<StackFrame> rawFrames = thread.frames();
+            for (StackFrame frame : rawFrames) {
+                result.add(new StackFrameImpl(frame));
+            }
+        } catch (IncompatibleThreadStateException e) {
+            // Ignore
+        }
+        return result;
     }
 
     /**

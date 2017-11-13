@@ -62,14 +62,13 @@ import com.microsoft.java.debug.core.Configuration;
 import com.microsoft.java.debug.core.DebugException;
 import com.microsoft.java.debug.core.DebugUtility;
 import com.microsoft.java.debug.core.IDebugSession;
+import com.microsoft.java.debug.core.IStackFrame;
 import com.microsoft.java.debug.core.adapter.IHotCodeReplaceProvider;
 import com.microsoft.java.debug.core.adapter.IRedefineClassEvent;
 import com.microsoft.java.debug.core.adapter.IRedefineClassListener;
 import com.sun.jdi.ArrayType;
 import com.sun.jdi.ClassNotLoadedException;
-import com.sun.jdi.IncompatibleThreadStateException;
 import com.sun.jdi.ReferenceType;
-import com.sun.jdi.StackFrame;
 import com.sun.jdi.ThreadReference;
 import com.sun.jdi.Type;
 import com.sun.jdi.VirtualMachine;
@@ -83,6 +82,8 @@ public class JavaHotCodeReplaceProvider implements IHotCodeReplaceProvider, IRes
     private IDebugSession currentDebugSession;
 
     private List<IRedefineClassListener> listeners = new ArrayList<>();
+
+    private Map<ThreadReference, List<IStackFrame>> threadFrameMap = new HashMap<>();
 
     /**
      * Visitor for resource deltas.
@@ -398,20 +399,20 @@ public class JavaHotCodeReplaceProvider implements IHotCodeReplaceProvider, IRes
      *            may have entries added by this method
      */
     protected void attemptPopFrames(List<IResource> resources, List<String> replacedClassNames, List<ThreadReference> poppedThreads) throws DebugException {
-        List<StackFrame> popFrames = getAffectedFrames(currentDebugSession.getAllThreads(), resources, replacedClassNames);
+        List<IStackFrame> popFrames = getAffectedFrames(currentDebugSession.getAllThreads(), resources, replacedClassNames);
 
         // All threads that want to drop to frame are able. Proceed with the
         // drop
-        StackFrame popFrame = null;
-        Iterator<StackFrame> iter = popFrames.iterator();
+        IStackFrame popFrame = null;
+        Iterator<IStackFrame> iter = popFrames.iterator();
         while (iter.hasNext()) {
             try {
                 popFrame = iter.next();
                 popStackFrame(popFrame);
-                poppedThreads.add(popFrame.thread());
+                poppedThreads.add(popFrame.getThread());
             } catch (DebugException de) {
-                poppedThreads.remove(popFrame.thread());
-                // Notfidy pop failed
+                poppedThreads.remove(popFrame.getThread());
+                // TODO: Notfidy pop failed
             }
         }
     }
@@ -439,12 +440,12 @@ public class JavaHotCodeReplaceProvider implements IHotCodeReplaceProvider, IRes
      *            the classes that have been redefined
      */
     protected void attemptDropToFrame(List<IResource> resources, List<String> replacedClassNames) throws DebugException {
-        List<StackFrame> dropFrames = getAffectedFrames(currentDebugSession.getAllThreads(), resources, replacedClassNames);
+        List<IStackFrame> dropFrames = getAffectedFrames(currentDebugSession.getAllThreads(), resources, replacedClassNames);
 
         // All threads that want to drop to frame are able. Proceed with the
         // drop
-        StackFrame dropFrame = null;
-        Iterator<StackFrame> iter = dropFrames.iterator();
+        IStackFrame dropFrame = null;
+        Iterator<IStackFrame> iter = dropFrames.iterator();
         while (iter.hasNext()) {
             try {
                 dropFrame = iter.next();
@@ -460,10 +461,10 @@ public class JavaHotCodeReplaceProvider implements IHotCodeReplaceProvider, IRes
     /**
      * Returns a list of frames which should be popped in the given threads.
      */
-    protected List<StackFrame> getAffectedFrames(List<ThreadReference> threads, List<IResource> resourceList, List<String> replacedClassNames)
+    protected List<IStackFrame> getAffectedFrames(List<ThreadReference> threads, List<IResource> resourceList, List<String> replacedClassNames)
             throws DebugException {
-        StackFrame affectedFrame = null;
-        List<StackFrame> popFrames = new ArrayList<>();
+        IStackFrame affectedFrame = null;
+        List<IStackFrame> popFrames = new ArrayList<>();
         int numThreads = threads.size();
         IResource[] resources = new IResource[resourceList.size()];
         resourceList.toArray(resources);
@@ -491,19 +492,36 @@ public class JavaHotCodeReplaceProvider implements IHotCodeReplaceProvider, IRes
      * possible, only stack frames whose methods were directly affected (and not
      * simply all frames in affected types) will be returned.
      */
-    protected StackFrame getAffectedFrame(ThreadReference thread, List<String> replacedClassNames) throws DebugException {
-        List<StackFrame> frames = null;
-        try {
-            frames = thread.frames();
-        } catch (IncompatibleThreadStateException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
-        }
-        StackFrame affectedFrame = null;
+    protected IStackFrame getAffectedFrame(ThreadReference thread, List<String> replacedClassNames) throws DebugException {
+        List<IStackFrame> frames = getStackFrames(thread, false);
+        IStackFrame affectedFrame = null;
         IProject project = null;
         for (int i = 0; i < frames.size(); i++) {
-            StackFrame frame = frames.get(i);
+            IStackFrame frame = frames.get(i);
             if (containsChangedType(frame, replacedClassNames)) {
+
+                // TODO: smart drop to frame support
+                // ICompilationUnit compilationUnit = getCompilationUnit(frame);
+                // // if we can't find the source, then do type-based drop
+                // if (compilationUnit != null) {
+                // try {
+                // project = compilationUnit.getCorrespondingResource()
+                // .getProject();
+                // delta = getDelta(compilationUnit,
+                // getLastProjectBuildTime(project));
+                //
+                // String typeName = frame.getDeclaringTypeName();
+                // typeName = typeName.replace('$', '.');
+                //
+                // if (!delta.hasChanged(typeName, frame.getName(),
+                // frame.getSignature())) {
+                // continue;
+                // }
+                // } catch (CoreException exception) {
+                // // If smart drop to frame fails, just do type-based drop
+                // }
+                // }
+                //
                 if (supportsDropToFrame(thread, frame)) {
                     affectedFrame = frame;
                     break;
@@ -526,7 +544,7 @@ public class JavaHotCodeReplaceProvider implements IHotCodeReplaceProvider, IRes
         return affectedFrame;
     }
 
-    protected boolean containsChangedType(StackFrame frame, List<String> replacedClassNames) throws DebugException {
+    protected boolean containsChangedType(IStackFrame frame, List<String> replacedClassNames) throws DebugException {
         String declaringTypeName = getDeclaringTypeName(frame);
         // Check if the frame's declaring type was changed
         if (replacedClassNames.contains(declaringTypeName)) {
@@ -547,8 +565,8 @@ public class JavaHotCodeReplaceProvider implements IHotCodeReplaceProvider, IRes
         return false;
     }
 
-    private String getDeclaringTypeName(StackFrame frame) throws DebugException {
-        return getGenericName(frame.location().method().declaringType());
+    private String getDeclaringTypeName(IStackFrame frame) throws DebugException {
+        return getGenericName(frame.getDeclaringType());
     }
 
     private String getGenericName(ReferenceType type) throws DebugException {
@@ -608,47 +626,39 @@ public class JavaHotCodeReplaceProvider implements IHotCodeReplaceProvider, IRes
         return name.toString();
     }
 
-    private boolean supportsDropToFrame(ThreadReference thread, StackFrame frame) {
-        try {
-            List<StackFrame> frames;
-            frames = thread.frames();
-            for (int i = 0; i < frames.size(); i++) {
-                if (frames.get(i).location().method().isNative()) {
-                    return false;
-                }
-                if (frames.get(i) == frame) {
-                    return true;
-                }
+    private boolean supportsDropToFrame(ThreadReference thread, IStackFrame frame) {
+        List<IStackFrame> frames = getStackFrames(thread, false);
+        for (int i = 0; i < frames.size(); i++) {
+            if (frames.get(i).isNative()) {
+                return false;
             }
-
-        } catch (IncompatibleThreadStateException e) {
-            logger.log(Level.INFO, "Failed to pop statck frames: " + e.getMessage(), e);
+            if (frames.get(i) == frame) {
+                return true;
+            }
         }
-        return true;
+        return false;
     }
 
-    protected void popStackFrame(StackFrame frame) throws DebugException {
+    protected void popStackFrame(IStackFrame frame) throws DebugException {
         if (frame != null) {
-            ThreadReference thread = frame.thread();
-            List<StackFrame> frames;
-            try {
-                frames = thread.frames();
-                for (int i = 0; i < frames.size(); i++) {
-                    thread.popFrames(frames.get(i));
-                    if (frames.get(i) == frame) {
-                        break;
-                    }
+            ThreadReference thread = frame.getThread();
+            List<IStackFrame> frames;
+            frames = getStackFrames(thread, false);
+            for (int i = 0; i < frames.size(); i++) {
+                frame.pop();
+                if (frames.get(i) == frame) {
+                    break;
                 }
-            } catch (IncompatibleThreadStateException e) {
-                logger.log(Level.INFO, "Failed to pop statck frames: " + e.getMessage(), e);
             }
+            // Update the stack frames
+            frames = getStackFrames(thread, true);
         }
     }
 
-    protected void dropToStackFrame(StackFrame frame) throws DebugException {
+    protected void dropToStackFrame(IStackFrame frame) throws DebugException {
         // Pop the drop frame and all frames above it
         popStackFrame(frame);
-        DebugUtility.stepInto(frame.thread(), currentDebugSession.getEventHub());
+        DebugUtility.stepInto(frame.getThread(), currentDebugSession.getEventHub());
     }
 
     private void redefineTypesJDK(List<IResource> resources, List<String> qualifiedNames) {
@@ -799,5 +809,15 @@ public class JavaHotCodeReplaceProvider implements IHotCodeReplaceProvider, IRes
                 }
             });
         }
+    }
+
+    private List<IStackFrame> getStackFrames(ThreadReference thread, boolean refresh) {
+        List<IStackFrame> result = null;
+        result = threadFrameMap.get(thread);
+        if (result == null || refresh) {
+            result = DebugUtility.computeStackFrame(thread);
+            threadFrameMap.put(thread, result);
+        }
+        return result;
     }
 }
