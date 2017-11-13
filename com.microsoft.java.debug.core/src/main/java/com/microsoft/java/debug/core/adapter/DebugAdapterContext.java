@@ -38,7 +38,7 @@ public class DebugAdapterContext implements IDebugAdapterContext {
     private transient boolean vmTerminated;
     private boolean isVmStopOnEntry = false;
     private String mainClass;
-    private transient boolean sendReponseLater;
+    private transient boolean sendResponseLater;
 
     private IdCollection<String> sourceReferences = new IdCollection<>();
     private RecyclableObjectPool<Long, Object> recyclableIdPool = new RecyclableObjectPool<>();
@@ -210,25 +210,25 @@ public class DebugAdapterContext implements IDebugAdapterContext {
 
      @Override
     public void setResponseAsync(boolean async) {
-        sendReponseLater = async;
+        sendResponseLater = async;
 
     }
 
     @Override
     public boolean shouldSendResponseAsync() {
-        // TODO Auto-generated method stub
-        return sendReponseLater;
+        return sendResponseLater;
     }
 
     @Override
     public void sendResponseAsync(Response res) {
-        // TODO Auto-generated method stub
         func.accept(res);
     }
+
+
     private Consumer<Response>  func;
+
     @Override
     public void setResponseConsumer(Consumer<Response> func) {
-        // TODO Auto-generated method stub
         this.func = func;
 
     }
